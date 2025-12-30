@@ -1,6 +1,6 @@
 #!/bin/bash
 # Complete OpenWebUI + OpenRouter.ai setup script for Ubuntu
-# Usage: OPENAI_API_KEY=your_key ./setup.sh
+# Usage: curl -sL https://raw.githubusercontent.com/xoroz/wp-ref/refs/heads/main/setup-2720.sh | bash
 
 set -e
 
@@ -10,21 +10,25 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-# Check if OPENAI_API_KEY is set
-if [ -z "$OPENAI_API_KEY" ]; then
-    echo -e "${RED}ERROR: Set OPENAI_API_KEY environment variable${NC}"
-    echo "Example: OPENAI_API_KEY=sk-... ./setup.sh"
-    exit 1
+log() { echo -e "${GREEN}[INFO]${NC} $1"; }
+warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
+
+# Check if running as root
+if [ "$EUID" -eq 0 ]; then
+    error "Do not run as root. Use sudo user."
 fi
 
-echo -e "${GREEN}Starting OpenWebUI + OpenRouter.ai installation...${NC}"
+log "Starting OpenWebUI + OpenRouter.ai setup..."
 
-# Update system
+# 1. Update system
+log "Updating system packages..."
 sudo apt update
 sudo apt upgrade -y
 sudo apt install -y ca-certificates curl gnupg lsb-release
 
-# Install Docker
+# 2. Install Docker CE
+log "Installing Docker CE..."
 sudo install -m 0755 -d /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
 sudo chmod a+r /etc/apt/keyrings/docker.gpg
@@ -32,27 +36,39 @@ echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.
 sudo apt update
 sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
-# Add user to docker group
+# 3. Configure Docker user
+groupadd -f docker || true
 sudo usermod -aG docker $USER
-newgrp docker
+log "User added to docker group. Please log out and back in, then re-run this script."
 
-# Enable Docker services
+# Test Docker (user must relogin for this to work)
+if ! docker --version &> /dev/null; then
+    warn "Docker test failed - user needs to relogin"
+    exit 0
+fi
+
+# 4. Enable Docker services
 sudo systemctl enable docker.service containerd.service
-sudo systemctl start docker.service
+sudo systemctl start docker
 
-# Create project directory
+# 5. Create OpenWebUI project
+log "Creating OpenWebUI project..."
 mkdir -p ~/openwebui
 cd ~/openwebui
 
-# Create custom network and volume
-docker network create openwebui-net 2>/dev/null || true
-docker volume create open-webui-data 2>/dev/null || true
+# 6. Create .env file (user must edit)
+cat > .env << 'EOF'
+# EDIT THIS: Replace with your OpenRouter.ai API key
+OPENAI_API_KEY=sk-or-v1-your_actual_openrouter_api_key_here
 
-# Generate secure secret key
-WEBUI_SECRET_KEY=$(openssl rand -hex 32)
+# Auto-generated secure secret key
+WEBUI_SECRET_KEY=$(openssl rand -base64 32)
+EOF
 
-# Create docker-compose.yaml
-cat > docker-compose.yaml << EOF
+chmod 600 .env
+
+# 7. Create docker-compose.yaml from context
+cat > docker-compose.yaml << 'EOF'
 services:
   open-webui:
     image: ghcr.io/open-webui/open-webui:main
@@ -66,35 +82,34 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
     restart: unless-stopped
-    networks:
-      - openwebui-net
-
 volumes:
   open-webui-data:
-
-networks:
-  openwebui-net:
-    external: true
 EOF
 
-# Start OpenWebUI
+# 8. Start OpenWebUI
+log "Starting OpenWebUI..."
 docker compose up -d
 
-# Wait for startup
-sleep 10
+# 9. Verification
+log "Verifying deployment..."
+sleep 5
+docker ps --filter name=openwebui
+docker logs openwebui --tail 20
 
-# Show status
-echo -e "\n${GREEN}✓ Installation complete!${NC}"
-echo -e "${GREEN}✓ Access OpenWebUI at: http://localhost:8080${NC}"
-echo -e "${GREEN}✓ Generated WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY}${NC}"
-echo
+log "✅ Setup complete!"
+log "🌐 Access OpenWebUI at: http://localhost:8080"
+log "⚠️  IMPORTANT: Edit ~/.openwebui/.env with your OpenRouter.ai API key"
+log "🔑 Generate secret key if needed: openssl rand -base64 32"
+log "📁 Backup command: docker run --rm -v openwebui-data:/data -v $(pwd):/backup alpine tar czf /backup/openwebui-$(date +%Y%m%d).tar.gz -C /data ."
+log "🔄 Update command: cd ~/openwebui && docker compose down && docker compose pull && docker compose up -d"
 
-docker ps --filter name=open-webui
-docker logs open-webui --tail 10
+cat << 'EOF'
 
-echo -e "\n${YELLOW}Next steps:${NC}"
-echo "1. Open http://localhost:8080"
-echo "2. Create admin user"
-echo "3. OpenRouter.ai models auto-configured"
+🚀 NEXT STEPS:
+1. nano ~/.openwebui/.env  # Add your OpenRouter.ai API key
+2. docker compose down && docker compose up -d  # Restart with env vars
+3. Visit http://127.0.0.1:8080
+4. Create admin account
+5. Configure OpenAI connection in Settings
 
-echo -e "\n${GREEN}Success! OpenWebUI ready with OpenRouter.ai integration.${NC}"
+EOF
