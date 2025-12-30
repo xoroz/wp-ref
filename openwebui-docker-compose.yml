@@ -1,0 +1,15 @@
+services:
+ open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_API_BASE_URL=https://openrouter.ai/api/v1
+      - WEBUI_SECRET_KEY=12312300_0p3n-s3s4m3_k3y  # Change to a secure random key for production
+    volumes:
+      - open-webui-data:/app/backend/data  # Persistent volume for data
+    ports:
+      - "127.0.0.1:8080:8080"
+    restart: unless-stopped
+volumes:
+  open-webui-data:  # Named volume for persistence
