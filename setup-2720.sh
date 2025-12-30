@@ -1,92 +1,99 @@
 #!/bin/bash
-# Complete OpenWebUI + OpenRouter.ai setup script
-# Usage: curl -sSL https://raw.githubusercontent.com/xoroz/wp-ref/refs/heads/main/setup-2720.sh | bash
+# Automated setup for OpenWebUI + OpenRouter on Ubuntu
+# Run as non-root sudo user
 
 set -e
 
 # Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
+RED='\\e[31m'
+GREEN='\\e[32m'
+YELLOW='\\e[33m'
+NC='\\e[0m'
 
-print_status() { echo -e "${GREEN}[+] $1${NC}"; }
-print_warning() { echo -e "${YELLOW}[!] $1${NC}"; }
-error_exit() { echo -e "${RED}[-] $1${NC}"; exit 1; }
+echo -e "${GREEN}Starting OpenWebUI + OpenRouter setup...${NC}"
 
-print_status "Starting OpenWebUI setup..."
+# Check Ubuntu
+if ! grep -q 'Ubuntu' /etc/os-release 2>/dev/null; then
+    echo -e "${RED}Ubuntu required!${NC}"
+    exit 1
+fi
 
-# Check if running as root
-[[ $EUID -eq 0 ]] && error_exit "Do not run as root. Use sudo user."
+read -p "Enter OpenRouter API key: " API_KEY
+if [[ -z "$API_KEY" ]]; then
+    echo -e "${RED}API key required!${NC}"
+    exit 1
+fi
+
+read -p "Enter host port (default 3000): " PORT
+PORT=${PORT:-3000}
 
 # Update system
-print_status "Updating system..."
 sudo apt update && sudo apt upgrade -y
+sudo apt install ca-certificates curl gnupg lsb-release openssl -y
 
-# Install Docker dependencies
-print_status "Installing Docker CE..."
-sudo apt install -y ca-certificates curl
-gpg_dir="/etc/apt/keyrings"
-sudo install -m 0755 -d $gpg_dir
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o $gpg_dir/docker.gpg
-sudo chmod a+r $gpg_dir/docker.gpg
-
-echo "deb [arch=$(dpkg --print-architecture) signed-by=$gpg_dir/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo \"$VERSION_CODENAME\") stable" | sudo tee /etc/apt/sources.list.d/docker.list &gt; /dev/null
+# Docker install (official method)
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo \"$VERSION_CODENAME\") stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 sudo apt update
-sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo apt install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin -y
 
-# Add user to docker group
+# User to docker group
 sudo usermod -aG docker $USER
-newgrp docker &gt;/dev/null 2&gt;&amp;1 || print_warning "Please relogin for docker group changes to take effect"
+newgrp docker
 
-# Test Docker
-print_status "Testing Docker installation..."
-docker run --rm hello-world &gt;/dev/null || error_exit "Docker test failed"
-print_status "Docker OK"
+# Enable services
+sudo systemctl enable --now docker.socket docker.service
 
-# Create OpenWebUI directory
+# Create OpenWebUI dir
 mkdir -p ~/openwebui
 cd ~/openwebui
 
-# Create docker-compose.yaml from context
-cat &gt; docker-compose.yaml &lt;&lt; 'EOF'
+# Generate secret key
+SECRET_KEY=$(openssl rand -hex 32)
+
+# Create docker-compose.yml
+cat > docker-compose.yml << EOF
+version: '3.8'
 services:
-  open-webui:
+  openwebui:
     image: ghcr.io/open-webui/open-webui:main
-    container_name: open-webui
-    environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - OPENAI_API_BASE_URL=https://openrouter.ai/api/v1
-      - WEBUI_SECRET_KEY=12312300_0p3n-s3s4m3_k3y  # Change to secure random key
-    volumes:
-      - open-webui-data:/app/backend/data
-    ports:
-      - "127.0.0.1:8080:8080"
+    container_name: openwebui
     restart: unless-stopped
+    ports:
+      - "${PORT}:8080"
+    environment:
+      - WEBUI_SECRET_KEY=${SECRET_KEY}
+      - OPENAI_API_BASE=https://openrouter.ai/api/v1
+      - OPENAI_API_KEY=${API_KEY}
+    volumes:
+      - openwebui:/app/backend/data
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 volumes:
-  open-webui-data:
+  openwebui:
 EOF
 
-# Create secure .env template
-cat &gt; .env &lt;&lt; 'EOF'
-# Get your API key from https://openrouter.ai
-# OPENAI_API_KEY=sk-or-...
-EOF
-chmod 600 .env
+# Firewall
+sudo ufw allow ${PORT}/tcp &>/dev/null || true
 
-print_status "Setup complete!"
-print_status "1. Edit ~/.env with your OpenRouter.ai API key"
-print_status "2. Run: cd ~/openwebui &amp;&amp; docker compose up -d"
-print_status "3. Access: http://localhost:8080"
-print_status "4. Create admin user on first visit"
+# Start
+docker compose up -d
 
-# Show verification commands
-cat &lt;&lt; 'EOF'
-
-Verification:
-$ docker ps | grep openwebui
-$ docker logs openwebui
-
-Update:
-$ cd ~/openwebui &amp;&amp; docker compose down &amp;&amp; docker compose pull &amp;&amp; docker compose up -d
-EOF
+# Wait and check
+sleep 10
+if docker ps | grep -q openwebui; then
+    IP=$(curl -s ifconfig.me || hostname -I | awk '{print $1}')
+    echo -e "${GREEN}✓ Success! Access at http://${IP}:${PORT}${NC}"
+    echo -e "${YELLOW}Models auto-load in Admin > Connections > OpenAI${NC}"
+    echo "Logs: docker logs openwebui"
+    echo "Stop: cd ~/openwebui && docker compose down"
+    echo "Update: docker compose pull && docker compose up -d"
+else
+    echo -e "${RED}Failed! Check: docker compose logs${NC}"
+    exit 1
+fi
