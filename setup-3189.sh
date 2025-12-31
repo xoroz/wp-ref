@@ -28,8 +28,10 @@ download_launcher() {
         aarch64|arm64) suffix="linux-arm64" ;;
         *) echo -e "${RED}Unsupported architecture: $arch${NC}"; exit 1 ;;
     esac
-    
-    wget -O task-runner-launcher-${suffix}.tar.gz https://github.com/n8n-io/task-runner-launcher/releases/latest/download/task-runner-launcher-${suffix}.tar.gz
+#https://github.com/n8n-io/task-runner-launcher/releases/download/1.4.2/task-runner-launcher-1.4.2-linux-amd64.tar.gz
+
+    wget -O task-runner-launcher-${suffix}.tar.gz https://github.com/n8n-io/task-runner-launcher/releases/download/1.4.2/task-runner-launcher-1.4.2-$suffix.tar.gz
+
     tar -xzf task-runner-launcher-${suffix}.tar.gz
     chmod +x task-runner-launcher
     rm task-runner-launcher-${suffix}.tar.gz
@@ -40,28 +42,32 @@ create_config() {
     echo -e "${GREEN}Creating config file...${NC}"
     mkdir -p /etc
     cat > $config_path << 'EOF'
-[
-  {
-    "runner-type": "javascript",
-    "workdir": "/opt/n8n/scripts",
-    "command": "node",
-    "args": [],
-    "health-check-server-port": 5681,
-    "allowed-env": ["PATH", "NODE_PATH"],
-    "env-overrides": {"LOG_LEVEL": "info"}
-  },
-  {
-    "runner-type": "python",
-    "workdir": "/opt/n8n/scripts",
-    "command": "python3",
-    "args": ["-u"],
-    "health-check-server-port": 5682,
-    "allowed-env": ["PATH", "PYTHONPATH"],
-    "env-overrides": {"LOG_LEVEL": "info"}
-  }
-]
+{
+  "task-runners": [
+    {
+      "runner-type": "javascript",
+      "workdir": "/opt/n8n/scripts",
+      "command": "node",
+      "args": [],
+      "health-check-server-port": "5681",
+      "allowed-env": ["PATH", "NODE_PATH"],
+      "env-overrides": {"LOG_LEVEL": "info"}
+    },
+    {
+      "runner-type": "python",
+      "workdir": "/opt/n8n/scripts",
+      "command": "python3",
+      "args": ["-u"],
+      "health-check-server-port": "5682",
+      "allowed-env": ["PATH", "PYTHONPATH"],
+      "env-overrides": {"LOG_LEVEL": "info"}
+    }
+  ]
+}
 EOF
     echo -e "${GREEN}Config created: $config_path${NC}"
+    mkdir -p /opt/n8n/scripts
+    echo -e "${GREEN}Created workdir: /opt/n8n/scripts${NC}"
 }
 
 setup_environment() {
